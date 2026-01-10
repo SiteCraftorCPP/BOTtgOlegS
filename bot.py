@@ -529,7 +529,16 @@ async def handle_text_instead_of_contact(message: Message):
 # Админка - команда /admin (не требует номер телефона, только для админа)
 @dp.message(Command("admin"))
 async def cmd_admin(message: Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    # Перезагружаем конфигурацию для актуальных значений
+    from dotenv import load_dotenv
+    import importlib
+    import config
+    load_dotenv()
+    importlib.reload(config)
+    from config import ADMIN_IDS
+    
+    # Проверяем права доступа с обновленными значениями
+    if message.from_user.id not in ADMIN_IDS:
         await message.answer("❌ У вас нет доступа к админ-панели.")
         return
     
