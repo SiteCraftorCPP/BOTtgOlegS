@@ -10,7 +10,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 
-from config import BOT_TOKEN, ADMIN_ID, OPERATOR_ID, DATA_DIR, TEXTS_FILE, BUTTONS_FILE, PHONES_FILE, NOTIFICATION_CHAT_ID, DIALOGS_FILE
+from config import BOT_TOKEN, ADMIN_ID, ADMIN_IDS, OPERATOR_ID, OPERATOR_IDS, DATA_DIR, TEXTS_FILE, BUTTONS_FILE, PHONES_FILE, NOTIFICATION_CHAT_ID, DIALOGS_FILE
 
 # Создаём директорию для данных, если её нет
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -106,13 +106,13 @@ async def save_dialogs(data):
 
 # Проверка админа и оператора
 def is_admin(user_id: int) -> bool:
-    return user_id == ADMIN_ID
+    return user_id in ADMIN_IDS
 
 def is_operator(user_id: int) -> bool:
-    return user_id == OPERATOR_ID
+    return user_id in OPERATOR_IDS
 
 def is_admin_or_operator(user_id: int) -> bool:
-    return is_admin(user_id) or is_operator(user_id)
+    return user_id in ADMIN_IDS or user_id in OPERATOR_IDS
 
 
 # Функции для работы с диалогами
@@ -355,17 +355,18 @@ async def send_dialog_notification(dialog_id: str, user_info: dict, button_path:
         except Exception as e:
             print(f"[NOTIFICATION] Ошибка отправки в канал: {e}")
         
-        # Отправляем только оператору (админу не отправляем)
-        try:
-            await bot.send_message(
-                chat_id=OPERATOR_ID,
-                text=message_text,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-            print(f"[NOTIFICATION] Уведомление отправлено оператору")
-        except Exception as e:
-            print(f"[NOTIFICATION] Ошибка отправки оператору: {e}")
+        # Отправляем всем операторам
+        for operator_id in OPERATOR_IDS:
+            try:
+                await bot.send_message(
+                    chat_id=operator_id,
+                    text=message_text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+                print(f"[NOTIFICATION] Уведомление отправлено оператору {operator_id}")
+            except Exception as e:
+                print(f"[NOTIFICATION] Ошибка отправки оператору {operator_id}: {e}")
         
         print(f"[NOTIFICATION] Уведомления о диалоге {dialog_id} отправлены")
         
@@ -1879,17 +1880,17 @@ async def handle_user_message_in_dialog(message: Message, state: FSMContext):
             [InlineKeyboardButton(text="💬 Ответить", callback_data=f"reply_dialog_{dialog_id}")]
         ])
         
-        # Отправляем только оператору (админу не отправляем)
-        # Отправляем оператору
-        try:
-            await bot.send_message(
-                chat_id=OPERATOR_ID,
-                text=message_text,
-                parse_mode="HTML",
-                reply_markup=keyboard
-            )
-        except Exception as e:
-            print(f"[DIALOG ERROR] Ошибка отправки оператору: {e}")
+        # Отправляем всем операторам
+        for operator_id in OPERATOR_IDS:
+            try:
+                await bot.send_message(
+                    chat_id=operator_id,
+                    text=message_text,
+                    parse_mode="HTML",
+                    reply_markup=keyboard
+                )
+            except Exception as e:
+                print(f"[DIALOG ERROR] Ошибка отправки оператору {operator_id}: {e}")
     else:
         # Диалог активен, отправляем назначенному оператору
         operator_id = dialog["operator_id"]
