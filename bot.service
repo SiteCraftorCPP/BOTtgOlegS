@@ -7,10 +7,10 @@ Type=simple
 User=root
 WorkingDirectory=/root/BOTtgOlegS
 Environment="PATH=/usr/bin:/usr/local/bin"
-# Если используете venv, раскомментируйте следующую строку и укажите путь к python из venv:
-# ExecStart=/root/BOTtgOlegS/venv/bin/python3 /root/BOTtgOlegS/bot.py
-# Если venv не используется, используйте системный python3:
-ExecStart=/usr/bin/python3 /root/BOTtgOlegS/bot.py
+# Используем python из venv (если venv создан)
+ExecStart=/root/BOTtgOlegS/venv/bin/python3 /root/BOTtgOlegS/bot.py
+# Если venv не используется, раскомментируйте следующую строку и закомментируйте выше:
+# ExecStart=/usr/bin/python3 /root/BOTtgOlegS/bot.py
 Restart=always
 RestartSec=10
 StandardOutput=journal
