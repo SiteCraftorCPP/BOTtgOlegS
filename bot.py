@@ -268,6 +268,79 @@ async def get_pending_dialogs() -> list:
     return pending
 
 
+async def get_closed_dialogs_for_operator(operator_id: int) -> list:
+    """Получает список закрытых диалогов для оператора/админа"""
+    dialogs_data = await load_dialogs()
+    closed_dialogs = []
+    
+    for dialog_id, dialog in dialogs_data["dialogs"].items():
+        if dialog["status"] == "closed":
+            # Показываем все закрытые диалоги админу, или только свои оператору
+            if is_admin(operator_id) or dialog.get("operator_id") == operator_id:
+                closed_dialogs.append((dialog_id, dialog))
+    
+    # Сортируем по дате закрытия (новые первые)
+    closed_dialogs.sort(key=lambda x: x[1].get("closed_at", ""), reverse=True)
+    
+    return closed_dialogs
+
+
+async def delete_dialog(dialog_id: str) -> bool:
+    """Полностью удаляет диалог из истории"""
+    dialogs_data = await load_dialogs()
+    
+    if dialog_id not in dialogs_data["dialogs"]:
+        return False
+    
+    dialog = dialogs_data["dialogs"][dialog_id]
+    
+    # Удаляем из активных диалогов пользователя (если есть)
+    user_id_str = str(dialog["user_id"])
+    if user_id_str in dialogs_data["user_active_dialogs"]:
+        if dialogs_data["user_active_dialogs"][user_id_str] == dialog_id:
+            del dialogs_data["user_active_dialogs"][user_id_str]
+    
+    # Удаляем из активных диалогов оператора (если есть)
+    operator_id_str = str(dialog.get("operator_id", ""))
+    if operator_id_str and operator_id_str in dialogs_data["operator_active_dialogs"]:
+        if dialog_id in dialogs_data["operator_active_dialogs"][operator_id_str]:
+            dialogs_data["operator_active_dialogs"][operator_id_str].remove(dialog_id)
+    
+    # Удаляем сам диалог
+    del dialogs_data["dialogs"][dialog_id]
+    
+    await save_dialogs(dialogs_data)
+    return True
+
+
+async def delete_dialog(dialog_id: str) -> bool:
+    """Полностью удаляет диалог из истории"""
+    dialogs_data = await load_dialogs()
+    
+    if dialog_id not in dialogs_data["dialogs"]:
+        return False
+    
+    dialog = dialogs_data["dialogs"][dialog_id]
+    
+    # Удаляем из активных диалогов пользователя (если есть)
+    user_id_str = str(dialog["user_id"])
+    if user_id_str in dialogs_data["user_active_dialogs"]:
+        if dialogs_data["user_active_dialogs"][user_id_str] == dialog_id:
+            del dialogs_data["user_active_dialogs"][user_id_str]
+    
+    # Удаляем из активных диалогов оператора (если есть)
+    operator_id_str = str(dialog.get("operator_id", ""))
+    if operator_id_str and operator_id_str in dialogs_data["operator_active_dialogs"]:
+        if dialog_id in dialogs_data["operator_active_dialogs"][operator_id_str]:
+            dialogs_data["operator_active_dialogs"][operator_id_str].remove(dialog_id)
+    
+    # Удаляем сам диалог
+    del dialogs_data["dialogs"][dialog_id]
+    
+    await save_dialogs(dialogs_data)
+    return True
+
+
 # Функция для получения текста кнопки из callback_data
 def get_button_text_from_callback(callback_data: str) -> str:
     """Получает читаемый текст кнопки из callback_data"""
@@ -570,8 +643,11 @@ async def cmd_dialogs(message: Message, state: FSMContext):
     # Получаем ожидающие диалоги (если есть)
     pending_dialogs = await get_pending_dialogs()
     
-    if not active_dialogs and not pending_dialogs:
-        await message.answer("📭 Активных диалогов нет.")
+    # Получаем закрытые диалоги для оператора
+    closed_dialogs = await get_closed_dialogs_for_operator(operator_id)
+    
+    if not active_dialogs and not pending_dialogs and not closed_dialogs:
+        await message.answer("📭 Диалогов нет.")
         return
     
     response_text = "💬 <b>Список диалогов</b>\n\n"
@@ -586,13 +662,16 @@ async def cmd_dialogs(message: Message, state: FSMContext):
             response_text += f"⏰ {dialog['created_at']}\n"
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Принять диалог", callback_data=f"accept_dialog_{dialog_id}")]
+                [InlineKeyboardButton(text="✅ Принять диалог", callback_data=f"accept_dialog_{dialog_id}")],
+                [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_dialog_{dialog_id}")]
             ])
             await message.answer(response_text, parse_mode="HTML", reply_markup=keyboard)
             response_text = ""  # Очищаем для следующего диалога
     
     if active_dialogs:
-        response_text += "\n📞 <b>Активные диалоги:</b>\n"
+        if response_text:
+            response_text += "\n"
+        response_text += "📞 <b>Активные диалоги:</b>\n"
         for dialog_id, dialog in active_dialogs:
             username_text = f"@{dialog['username']}" if dialog.get("username") else "нет"
             response_text += f"\n👤 <b>{dialog['user_name']}</b>\n"
@@ -602,7 +681,25 @@ async def cmd_dialogs(message: Message, state: FSMContext):
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💬 Ответить", callback_data=f"reply_dialog_{dialog_id}")],
-                [InlineKeyboardButton(text="❌ Закрыть", callback_data=f"close_dialog_{dialog_id}")]
+                [InlineKeyboardButton(text="❌ Закрыть", callback_data=f"close_dialog_{dialog_id}")],
+                [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_dialog_{dialog_id}")]
+            ])
+            await message.answer(response_text, parse_mode="HTML", reply_markup=keyboard)
+            response_text = ""  # Очищаем для следующего диалога
+    
+    if closed_dialogs:
+        if response_text:
+            response_text += "\n"
+        response_text += "📁 <b>Закрытые диалоги:</b> (последние 10)\n"
+        for dialog_id, dialog in closed_dialogs[:10]:  # Показываем только последние 10
+            username_text = f"@{dialog['username']}" if dialog.get("username") else "нет"
+            response_text += f"\n🔒 <b>{dialog['user_name']}</b>\n"
+            response_text += f"📱 {dialog['user_phone']}\n"
+            response_text += f"🔗 {username_text}\n"
+            response_text += f"⏰ Закрыт: {dialog.get('closed_at', 'N/A')}\n"
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🗑 Удалить из истории", callback_data=f"delete_dialog_{dialog_id}")]
             ])
             await message.answer(response_text, parse_mode="HTML", reply_markup=keyboard)
             response_text = ""  # Очищаем для следующего диалога
@@ -1613,8 +1710,11 @@ async def handle_operator_dialogs(callback: CallbackQuery, state: FSMContext):
     # Получаем ожидающие диалоги (если есть)
     pending_dialogs = await get_pending_dialogs()
     
-    if not active_dialogs and not pending_dialogs:
-        await callback.message.answer("📭 Активных диалогов нет.")
+    # Получаем закрытые диалоги для оператора
+    closed_dialogs = await get_closed_dialogs_for_operator(operator_id)
+    
+    if not active_dialogs and not pending_dialogs and not closed_dialogs:
+        await callback.message.answer("📭 Диалогов нет.")
         return
     
     response_text = "💬 <b>Список диалогов</b>\n\n"
@@ -1629,13 +1729,16 @@ async def handle_operator_dialogs(callback: CallbackQuery, state: FSMContext):
             response_text += f"⏰ {dialog['created_at']}\n"
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ Принять диалог", callback_data=f"accept_dialog_{dialog_id}")]
+                [InlineKeyboardButton(text="✅ Принять диалог", callback_data=f"accept_dialog_{dialog_id}")],
+                [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_dialog_{dialog_id}")]
             ])
             await callback.message.answer(response_text, parse_mode="HTML", reply_markup=keyboard)
             response_text = ""  # Очищаем для следующего диалога
     
     if active_dialogs:
-        response_text += "\n📞 <b>Активные диалоги:</b>\n"
+        if response_text:
+            response_text += "\n"
+        response_text += "📞 <b>Активные диалоги:</b>\n"
         for dialog_id, dialog in active_dialogs:
             username_text = f"@{dialog['username']}" if dialog.get("username") else "нет"
             response_text += f"\n👤 <b>{dialog['user_name']}</b>\n"
@@ -1645,7 +1748,25 @@ async def handle_operator_dialogs(callback: CallbackQuery, state: FSMContext):
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="💬 Ответить", callback_data=f"reply_dialog_{dialog_id}")],
-                [InlineKeyboardButton(text="❌ Закрыть", callback_data=f"close_dialog_{dialog_id}")]
+                [InlineKeyboardButton(text="❌ Закрыть", callback_data=f"close_dialog_{dialog_id}")],
+                [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"delete_dialog_{dialog_id}")]
+            ])
+            await callback.message.answer(response_text, parse_mode="HTML", reply_markup=keyboard)
+            response_text = ""  # Очищаем для следующего диалога
+    
+    if closed_dialogs:
+        if response_text:
+            response_text += "\n"
+        response_text += "📁 <b>Закрытые диалоги:</b> (последние 10)\n"
+        for dialog_id, dialog in closed_dialogs[:10]:  # Показываем только последние 10
+            username_text = f"@{dialog['username']}" if dialog.get("username") else "нет"
+            response_text += f"\n🔒 <b>{dialog['user_name']}</b>\n"
+            response_text += f"📱 {dialog['user_phone']}\n"
+            response_text += f"🔗 {username_text}\n"
+            response_text += f"⏰ Закрыт: {dialog.get('closed_at', 'N/A')}\n"
+            
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="🗑 Удалить из истории", callback_data=f"delete_dialog_{dialog_id}")]
             ])
             await callback.message.answer(response_text, parse_mode="HTML", reply_markup=keyboard)
             response_text = ""  # Очищаем для следующего диалога
@@ -1691,6 +1812,42 @@ async def handle_close_dialog(callback: CallbackQuery, state: FSMContext):
         await callback.answer("✅ Диалог закрыт")
     else:
         await callback.answer("❌ Не удалось закрыть диалог", show_alert=True)
+
+
+# Обработка удаления диалога из истории
+@dp.callback_query(F.data.startswith("delete_dialog_"))
+async def handle_delete_dialog(callback: CallbackQuery, state: FSMContext):
+    if not is_admin_or_operator(callback.from_user.id):
+        await callback.answer("❌ Нет доступа", show_alert=True)
+        return
+    
+    dialog_id = callback.data.replace("delete_dialog_", "")
+    
+    # Проверяем, что диалог существует
+    dialogs_data = await load_dialogs()
+    dialog = dialogs_data["dialogs"].get(dialog_id)
+    
+    if not dialog:
+        await callback.answer("❌ Диалог не найден", show_alert=True)
+        return
+    
+    # Проверяем права доступа (оператор может удалять только свои диалоги, админ - любые)
+    if not is_admin(callback.from_user.id) and dialog.get("operator_id") != callback.from_user.id:
+        await callback.answer("❌ Вы можете удалять только свои диалоги", show_alert=True)
+        return
+    
+    # Удаляем диалог
+    success = await delete_dialog(dialog_id)
+    
+    if success:
+        await callback.message.edit_text(
+            f"🗑 Диалог удалён из истории\n\n"
+            f"👤 Пользователь: {dialog['user_name']}\n"
+            f"📱 Телефон: {dialog['user_phone']}"
+        )
+        await callback.answer("✅ Диалог удалён из истории")
+    else:
+        await callback.answer("❌ Не удалось удалить диалог", show_alert=True)
 
 
 # Команда /reply для ответа оператора
