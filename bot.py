@@ -547,7 +547,8 @@ async def cmd_admin(message: Message, state: FSMContext):
     
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Редактировать текст", callback_data="admin_edit_texts")],
-        [InlineKeyboardButton(text="🔘 Редактировать кнопки", callback_data="admin_edit_buttons")]
+        [InlineKeyboardButton(text="🔘 Редактировать кнопки", callback_data="admin_edit_buttons")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
     ])
     
     await message.answer("🔧 Админ-панель", reply_markup=keyboard)
