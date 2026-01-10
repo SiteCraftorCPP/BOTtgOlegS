@@ -1,0 +1,15 @@
+[Unit]
+Description=Telegram Bot Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/BOTtgOlegS
+Environment="PATH=/usr/bin:/usr/local/bin"
+ExecStart=/usr/bin/python3 /root/BOTtgOlegS/bot.py
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
