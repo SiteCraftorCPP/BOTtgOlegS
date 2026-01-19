@@ -380,11 +380,11 @@ def get_button_text_from_callback(callback_data: str) -> str:
 
 # Функция для форматирования номера телефона с гиперссылкой
 def format_phone_number(phone: str) -> str:
-    """Форматирует номер телефона для кликабельности в Telegram"""
+    """Форматирует номер телефона для кликабельности в Telegram (без пробелов, с +)"""
     if not phone or phone == "Не указан" or phone.strip() == "":
         return "Не указан"
     
-    # Убираем все пробелы, дефисы и скобки для обработки
+    # Убираем все пробелы, дефисы и скобки
     clean_phone = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
     
     # Если номер начинается не с +, добавляем +7 для российских номеров
@@ -400,24 +400,8 @@ def format_phone_number(phone: str) -> str:
             if clean_phone and clean_phone[0].isdigit():
                 clean_phone = "+7" + clean_phone
     
-    # Форматируем номер для отображения (добавляем пробелы для читаемости)
-    # +7 960 763 66 55
-    if len(clean_phone) >= 12 and clean_phone.startswith("+7"):
-        # Берем только цифры после +7
-        digits = clean_phone[2:]
-        if len(digits) == 10:
-            # Формат: +7 960 763 66 55
-            display_phone = f"+7 {digits[0:3]} {digits[3:6]} {digits[6:8]} {digits[8:]}"
-        elif len(digits) > 10:
-            # Если номер длиннее, форматируем первые 10 цифр, остальные как есть
-            display_phone = f"+7 {digits[0:3]} {digits[3:6]} {digits[6:8]} {digits[8:10]} {digits[10:]}"
-        else:
-            display_phone = clean_phone
-    else:
-        display_phone = clean_phone
-    
-    # В Telegram номера с + автоматически становятся кликабельными, не нужны HTML-теги
-    return display_phone
+    # Возвращаем номер без пробелов, только с + в начале
+    return clean_phone
 
 
 # Функция для отправки уведомления о новом диалоге админу и оператору
