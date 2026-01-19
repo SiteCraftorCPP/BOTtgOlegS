@@ -378,13 +378,56 @@ def get_button_text_from_callback(callback_data: str) -> str:
     return mapping.get(callback_data, callback_data.replace("_", " ").title())
 
 
+# Функция для форматирования номера телефона с гиперссылкой
+def format_phone_number(phone: str) -> str:
+    """Форматирует номер телефона с гиперссылкой для кликабельности"""
+    if not phone or phone == "Не указан" or phone.strip() == "":
+        return "Не указан"
+    
+    # Убираем все пробелы, дефисы и скобки для обработки
+    clean_phone = phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    
+    # Если номер начинается не с +, добавляем +7 для российских номеров
+    if not clean_phone.startswith("+"):
+        # Если номер начинается с 7, добавляем +
+        if clean_phone.startswith("7"):
+            clean_phone = "+" + clean_phone
+        # Если номер начинается с 8, заменяем на +7
+        elif clean_phone.startswith("8"):
+            clean_phone = "+7" + clean_phone[1:]
+        else:
+            # Если номер начинается с цифры (например, 7960...), добавляем +7
+            if clean_phone and clean_phone[0].isdigit():
+                clean_phone = "+7" + clean_phone
+    
+    # Форматируем номер для отображения (добавляем пробелы для читаемости)
+    # +7 960 763 66 55
+    if len(clean_phone) >= 12 and clean_phone.startswith("+7"):
+        # Берем только цифры после +7
+        digits = clean_phone[2:]
+        if len(digits) == 10:
+            # Формат: +7 960 763 66 55
+            display_phone = f"+7 {digits[0:3]} {digits[3:6]} {digits[6:8]} {digits[8:]}"
+        elif len(digits) > 10:
+            # Если номер длиннее, форматируем первые 10 цифр, остальные как есть
+            display_phone = f"+7 {digits[0:3]} {digits[3:6]} {digits[6:8]} {digits[8:10]} {digits[10:]}"
+        else:
+            display_phone = clean_phone
+    else:
+        display_phone = clean_phone
+    
+    # Создаем HTML-ссылку для кликабельности
+    return f'<a href="tel:{clean_phone}">{display_phone}</a>'
+
+
 # Функция для отправки уведомления о новом диалоге админу и оператору
 async def send_dialog_notification(dialog_id: str, user_info: dict, button_path: list):
     """Отправляет уведомление о новом диалоге админу, оператору и в канал"""
     try:
         message_text = "🔔 <b>Новое обращение к оператору</b>\n\n"
         message_text += f"👤 <b>Имя:</b> {user_info.get('name', 'Не указано')}\n"
-        message_text += f"📱 <b>Номер телефона:</b> {user_info.get('phone', 'Не указан')}\n"
+        phone_formatted = format_phone_number(user_info.get('phone', 'Не указан'))
+        message_text += f"📱 <b>Номер телефона:</b> {phone_formatted}\n"
         
         if user_info.get('username'):
             message_text += f"🔗 <b>Username:</b> @{user_info['username']}\n"
@@ -405,7 +448,8 @@ async def send_dialog_notification(dialog_id: str, user_info: dict, button_path:
         # Формируем текст для канала (без ID пользователя)
         channel_text = "🔔 <b>Новое обращение к оператору</b>\n\n"
         channel_text += f"👤 <b>Имя:</b> {user_info.get('name', 'Не указано')}\n"
-        channel_text += f"📱 <b>Номер телефона:</b> {user_info.get('phone', 'Не указан')}\n"
+        phone_formatted = format_phone_number(user_info.get('phone', 'Не указан'))
+        channel_text += f"📱 <b>Номер телефона:</b> {phone_formatted}\n"
         
         if user_info.get('username'):
             channel_text += f"🔗 <b>Username:</b> @{user_info['username']}\n"
@@ -656,8 +700,9 @@ async def cmd_dialogs(message: Message, state: FSMContext):
         response_text += "⏳ <b>Ожидающие диалоги:</b>\n"
         for dialog_id, dialog in pending_dialogs:
             username_text = f"@{dialog['username']}" if dialog.get("username") else "нет"
+            phone_formatted = format_phone_number(dialog.get('user_phone', 'Не указан'))
             response_text += f"\n🔔 <b>{dialog['user_name']}</b>\n"
-            response_text += f"📱 {dialog['user_phone']}\n"
+            response_text += f"📱 {phone_formatted}\n"
             response_text += f"🔗 {username_text}\n"
             response_text += f"⏰ {dialog['created_at']}\n"
             
@@ -674,8 +719,9 @@ async def cmd_dialogs(message: Message, state: FSMContext):
         response_text += "📞 <b>Активные диалоги:</b>\n"
         for dialog_id, dialog in active_dialogs:
             username_text = f"@{dialog['username']}" if dialog.get("username") else "нет"
+            phone_formatted = format_phone_number(dialog.get('user_phone', 'Не указан'))
             response_text += f"\n👤 <b>{dialog['user_name']}</b>\n"
-            response_text += f"📱 {dialog['user_phone']}\n"
+            response_text += f"📱 {phone_formatted}\n"
             response_text += f"🔗 {username_text}\n"
             response_text += f"⏰ Принят: {dialog.get('accepted_at', 'N/A')}\n"
             
@@ -693,8 +739,9 @@ async def cmd_dialogs(message: Message, state: FSMContext):
         response_text += "📁 <b>Закрытые диалоги:</b> (последние 10)\n"
         for dialog_id, dialog in closed_dialogs[:10]:  # Показываем только последние 10
             username_text = f"@{dialog['username']}" if dialog.get("username") else "нет"
+            phone_formatted = format_phone_number(dialog.get('user_phone', 'Не указан'))
             response_text += f"\n🔒 <b>{dialog['user_name']}</b>\n"
-            response_text += f"📱 {dialog['user_phone']}\n"
+            response_text += f"📱 {phone_formatted}\n"
             response_text += f"🔗 {username_text}\n"
             response_text += f"⏰ Закрыт: {dialog.get('closed_at', 'N/A')}\n"
             
@@ -1618,10 +1665,11 @@ async def handle_accept_dialog(callback: CallbackQuery, state: FSMContext):
         
         # Просто обновляем сообщение без лишних уведомлений
         username_text = f"@{dialog['username']}" if dialog.get("username") else "Нет username"
+        phone_formatted = format_phone_number(dialog.get('user_phone', 'Не указан'))
         
         await callback.message.edit_text(
             f"👤 <b>{dialog['user_name']}</b>\n"
-            f"📱 {dialog['user_phone']}\n"
+            f"📱 {phone_formatted}\n"
             f"🔗 {username_text}",
             parse_mode="HTML",
             reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2039,8 +2087,9 @@ async def handle_user_message_in_dialog(message: Message, state: FSMContext):
     # Если диалог pending, отправляем оператору
     if dialog["status"] == "pending":
         username_text = f"@{dialog['username']}" if dialog.get("username") else "нет"
+        phone_formatted = format_phone_number(dialog.get('user_phone', 'Не указан'))
         message_text = f"💬 <b>Сообщение от {dialog['user_name']}</b> ({username_text})\n\n"
-        message_text += f"📱 {dialog['user_phone']}\n\n"
+        message_text += f"📱 {phone_formatted}\n\n"
         message_text += f"{message.text}"
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -2063,8 +2112,9 @@ async def handle_user_message_in_dialog(message: Message, state: FSMContext):
         operator_id = dialog["operator_id"]
         try:
             username_text = f"@{dialog['username']}" if dialog.get("username") else "нет"
+            phone_formatted = format_phone_number(dialog.get('user_phone', 'Не указан'))
             message_text = f"💬 <b>Сообщение от {dialog['user_name']}</b> ({username_text})\n\n"
-            message_text += f"📱 {dialog['user_phone']}\n\n"
+            message_text += f"📱 {phone_formatted}\n\n"
             message_text += f"{message.text}"
             
             keyboard = InlineKeyboardMarkup(inline_keyboard=[

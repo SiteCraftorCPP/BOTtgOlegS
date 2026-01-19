@@ -9,7 +9,7 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "8137212504:AAHUyVbh634U0gINFOuTCSOpjMnern9HD
 # Админы (через запятую)
 ADMIN_IDS = [int(admin_id.strip()) for admin_id in os.getenv("ADMIN_IDS", "6933111964,506336774").split(",") if admin_id.strip()]
 # Операторы (через запятую)
-OPERATOR_IDS = [int(operator_id.strip()) for operator_id in os.getenv("OPERATOR_IDS", "1182543866,6786125271").split(",") if operator_id.strip()]
+OPERATOR_IDS = [int(operator_id.strip()) for operator_id in os.getenv("OPERATOR_IDS", "1182543866").split(",") if operator_id.strip()]
 
 # Для обратной совместимости
 ADMIN_ID = ADMIN_IDS[0] if ADMIN_IDS else 6933111964
