@@ -380,7 +380,7 @@ def get_button_text_from_callback(callback_data: str) -> str:
 
 # Функция для форматирования номера телефона с гиперссылкой
 def format_phone_number(phone: str) -> str:
-    """Форматирует номер телефона с гиперссылкой для кликабельности"""
+    """Форматирует номер телефона для кликабельности в Telegram"""
     if not phone or phone == "Не указан" or phone.strip() == "":
         return "Не указан"
     
@@ -416,8 +416,8 @@ def format_phone_number(phone: str) -> str:
     else:
         display_phone = clean_phone
     
-    # Создаем HTML-ссылку для кликабельности
-    return f'<a href="tel:{clean_phone}">{display_phone}</a>'
+    # В Telegram номера с + автоматически становятся кликабельными, не нужны HTML-теги
+    return display_phone
 
 
 # Функция для отправки уведомления о новом диалоге админу и оператору
