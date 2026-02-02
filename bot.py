@@ -4,11 +4,12 @@ import os
 import aiofiles
 from datetime import datetime
 from aiogram import Bot, Dispatcher, F
-from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove, MenuButtonCommands
 from aiogram.filters import Command, CommandStart
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import BOT_TOKEN, ADMIN_ID, ADMIN_IDS, OPERATOR_ID, OPERATOR_IDS, DATA_DIR, TEXTS_FILE, BUTTONS_FILE, PHONES_FILE, NOTIFICATION_CHAT_ID, DIALOGS_FILE
 
@@ -17,6 +18,7 @@ os.makedirs(DATA_DIR, exist_ok=True)
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
+scheduler = AsyncIOScheduler()
 
 
 # Состояния для админки
@@ -26,6 +28,15 @@ class AdminStates(StatesGroup):
     waiting_text_content = State()
     waiting_button_content = State()
     waiting_button_text = State()  # Для редактирования текста кнопки
+    
+    # Broadcast states
+    waiting_broadcast_content = State()
+    waiting_broadcast_confirm = State()
+    
+    # Scheduled broadcast states
+    waiting_schedule_date = State()
+    waiting_schedule_content = State()
+    waiting_schedule_confirm = State()
 
 
 # Состояния для пользователей
@@ -535,6 +546,9 @@ async def get_main_menu_keyboard():
 # Приветственное сообщение - запрос номера телефона
 @dp.message(CommandStart())
 async def cmd_start(message: Message, state: FSMContext):
+    # Устанавливаем кнопку меню
+    await bot.set_chat_menu_button(chat_id=message.chat.id, menu_button=MenuButtonCommands())
+    
     user_id = str(message.from_user.id)
     phones = await load_phones()
     
@@ -550,6 +564,10 @@ async def cmd_start(message: Message, state: FSMContext):
         welcome_text = welcome_text.format(name=user_name)
         
         keyboard = await get_main_menu_keyboard()
+        
+        # Удаляем Reply клавиатуру (кнопку телефона), если она есть
+        msg = await message.answer("...", reply_markup=ReplyKeyboardRemove())
+        await msg.delete()
         
         await message.answer(welcome_text, reply_markup=keyboard)
         await state.clear()
@@ -649,6 +667,9 @@ async def cmd_admin(message: Message, state: FSMContext):
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📝 Редактировать текст", callback_data="admin_edit_texts")],
         [InlineKeyboardButton(text="🔘 Редактировать кнопки", callback_data="admin_edit_buttons")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="⏳ Отложенная рассылка", callback_data="admin_scheduled_broadcast")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_statistics")],
         [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
     ])
     
@@ -739,12 +760,58 @@ async def cmd_dialogs(message: Message, state: FSMContext):
 # Обработка callback админки
 @dp.callback_query(F.data.startswith("admin_"))
 async def admin_callback(callback: CallbackQuery, state: FSMContext):
+    # Исключение для кнопки отмены/назад, если пользователь случайно попал сюда
     if not is_admin(callback.from_user.id):
-        await callback.answer("❌ Нет доступа", show_alert=True)
-        return
+        # Если это не кнопка возврата, то запрещаем
+        if callback.data not in ["back_to_admin", "back_to_menu"]:
+             await callback.answer("❌ Нет доступа", show_alert=True)
+             return
     
     action = callback.data
-    await callback.answer()
+    # Обработка кнопки "Отмена" при рассылке
+    if callback.data == "back_to_admin" or callback.data == "back_to_menu":
+        # Сначала отвечаем на callback, чтобы убрать часики загрузки
+        try:
+            await callback.answer()
+        except:
+            pass
+            
+        await state.clear()
+        if callback.data == "back_to_menu":
+            await callback.message.delete()
+            await cmd_start(callback.message, state)
+        else:
+            await cmd_admin(callback.message, state)
+        return
+
+    # Обработка новых функций ПЕРЕД await callback.answer()
+    if action == "admin_broadcast":
+        # Сначала отвечаем на callback
+        try:
+            await callback.answer()
+        except:
+            pass
+        await start_broadcast(callback, state)
+        return
+    elif action == "admin_scheduled_broadcast":
+        try:
+            await callback.answer()
+        except:
+            pass
+        await start_scheduled_broadcast(callback, state)
+        return
+    elif action == "admin_statistics":
+        try:
+            await callback.answer()
+        except:
+            pass
+        await admin_statistics(callback)
+        return
+
+    try:
+        await callback.answer()
+    except:
+        pass
     
     if action == "admin_edit_texts":
         # Группируем услуги по категориям
@@ -814,7 +881,11 @@ async def admin_callback(callback: CallbackQuery, state: FSMContext):
     elif action == "admin_back":
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📝 Редактировать текст", callback_data="admin_edit_texts")],
-            [InlineKeyboardButton(text="🔘 Редактировать кнопки", callback_data="admin_edit_buttons")]
+            [InlineKeyboardButton(text="🔘 Редактировать кнопки", callback_data="admin_edit_buttons")],
+            [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+            [InlineKeyboardButton(text="⏳ Отложенная рассылка", callback_data="admin_scheduled_broadcast")],
+            [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_statistics")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
         ])
         await callback.message.edit_text("🔧 Админ-панель", reply_markup=keyboard)
     
@@ -2182,6 +2253,319 @@ async def handle_cancel_user_dialog(callback: CallbackQuery, state: FSMContext):
         await callback.message.answer("❌ Не удалось отменить диалог.")
 
 
+
+
+
+
+# ==========================================
+# НОВЫЙ ФУНКЦИОНАЛ: Статистика и Рассылка
+# ==========================================
+
+# 1. Статистика
+@dp.callback_query(F.data == "admin_statistics")
+async def admin_statistics(callback: CallbackQuery):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для админов", show_alert=True)
+        return
+
+    phones = await load_phones()
+    total_users = len(phones)
+    
+    response = f"📊 <b>Статистика бота</b>\n\n"
+    response += f"👥 Всего пользователей: <b>{total_users}</b>\n\n"
+    
+    # Показываем всех пользователей
+    all_users = list(phones.items())
+    all_users.reverse() # Самые новые сверху
+    
+    # Если пользователей очень много, сообщение может не влезть в лимит Telegram (4096 символов)
+    # Поэтому будем отправлять частями
+    
+    current_message = response
+    
+    # Отправляем первое сообщение с заголовком
+    # await callback.message.edit_text(response, parse_mode="HTML") # Нельзя редактировать на несколько сообщений сразу
+    
+    # Формируем полный список
+    user_list_text = ""
+    for user_id, data in all_users:
+        name = f"{data.get('first_name', '')} {data.get('last_name', '')}".strip() or "Без имени"
+        phone = format_phone_number(data.get('phone', 'Не указан'))
+        username = f"@{data.get('username')}" if data.get('username') else "Не указан"
+        
+        user_entry = f"👤 Имя: {name}\n"
+        user_entry += f"📱 Номер телефона: {phone}\n"
+        user_entry += f"🔗 Username: {username}\n\n"
+        
+        user_list_text += user_entry
+    
+    # Если список пустой (хотя бы админ должен быть)
+    if not user_list_text:
+        user_list_text = "Нет данных о пользователях."
+
+    # Разбиваем на части по ~4000 символов, чтобы не превысить лимит
+    parts = []
+    while len(user_list_text) > 0:
+        if len(user_list_text) > 4000:
+            part = user_list_text[:4000]
+            # Ищем последний перенос строки, чтобы не разрывать запись
+            last_newline = part.rfind('\n\n')
+            if last_newline != -1:
+                part = user_list_text[:last_newline+2]
+                user_list_text = user_list_text[last_newline+2:]
+            else:
+                user_list_text = user_list_text[4000:]
+            parts.append(part)
+        else:
+            parts.append(user_list_text)
+            user_list_text = ""
+
+    # Отправляем заголовок (редактируем старое сообщение)
+    await callback.message.edit_text(response, parse_mode="HTML")
+    
+    # Отправляем части списка отдельными сообщениями
+    for part in parts:
+        await callback.message.answer(part, parse_mode="HTML")
+        await asyncio.sleep(0.1)
+
+    # Кнопка назад отдельным сообщением в конце
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
+    ])
+    await callback.message.answer("🔽 Конец списка", reply_markup=keyboard)
+
+@dp.callback_query(F.data == "back_to_admin")
+async def back_to_admin(callback: CallbackQuery, state: FSMContext):
+    # Сначала отвечаем на callback
+    try:
+        await callback.answer()
+    except:
+        pass
+        
+    await state.clear()
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Редактировать текст", callback_data="admin_edit_texts")],
+        [InlineKeyboardButton(text="🔘 Редактировать кнопки", callback_data="admin_edit_buttons")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="⏳ Отложенная рассылка", callback_data="admin_scheduled_broadcast")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_statistics")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+    ])
+    
+    # Если сообщение можно отредактировать
+    try:
+        await callback.message.edit_text("🔧 Админ-панель", reply_markup=keyboard)
+    except:
+        await callback.message.answer("🔧 Админ-панель", reply_markup=keyboard)
+
+# 2. Рассылка
+@dp.callback_query(F.data == "admin_broadcast")
+async def start_broadcast(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для админов", show_alert=True)
+        return
+        
+    await state.set_state(AdminStates.waiting_broadcast_content)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
+    ])
+    
+    await callback.message.edit_text(
+        "📢 <b>Рассылка</b>\n\n"
+        "Отправьте сообщение (текст, фото, видео), которое нужно разослать всем пользователям.\n"
+        "Можно прикрепить медиа.",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@dp.message(AdminStates.waiting_broadcast_content)
+async def process_broadcast_content(message: Message, state: FSMContext):
+    # Сохраняем сообщение целиком, чтобы потом скопировать его пользователям
+    # Но aiogram FSM не умеет хранить Message object напрямую в redis/storage (обычно), но MemoryStorage может.
+    # Однако лучше хранить ID сообщения и chat_id, чтобы использовать copy_message
+    
+    await state.update_data(
+        broadcast_message_id=message.message_id,
+        broadcast_chat_id=message.chat.id
+    )
+    
+    await state.set_state(AdminStates.waiting_broadcast_confirm)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Отправить всем", callback_data="confirm_broadcast")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
+    ])
+    
+    await message.answer(
+        "📢 <b>Предпросмотр рассылки</b>\n\n"
+        "Сообщение получено. Отправить его всем пользователям?",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+    # Тут можно было бы отправить копию для предпросмотра
+    await message.copy_to(chat_id=message.chat.id)
+
+@dp.callback_query(F.data == "confirm_broadcast", AdminStates.waiting_broadcast_confirm)
+async def execute_broadcast(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    msg_id = data.get("broadcast_message_id")
+    chat_id = data.get("broadcast_chat_id")
+    
+    phones = await load_phones()
+    users = list(phones.keys())
+    
+    await callback.message.edit_text(f"⏳ Начинаю рассылку по {len(users)} пользователям...")
+    
+    success_count = 0
+    fail_count = 0
+    
+    for user_id in users:
+        try:
+            await bot.copy_message(
+                chat_id=user_id,
+                from_chat_id=chat_id,
+                message_id=msg_id
+            )
+            success_count += 1
+            await asyncio.sleep(0.05) # Небольшая задержка чтобы не спамить слишком быстро
+        except Exception as e:
+            print(f"Failed to send to {user_id}: {e}")
+            fail_count += 1
+            
+    await callback.message.answer(
+        f"✅ <b>Рассылка завершена!</b>\n\n"
+        f"Успешно: {success_count}\n"
+        f"Ошибок: {fail_count}",
+        parse_mode="HTML"
+    )
+    await state.clear()
+    
+    # Возвращаем админа в главное меню админки
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Редактировать текст", callback_data="admin_edit_texts")],
+        [InlineKeyboardButton(text="🔘 Редактировать кнопки", callback_data="admin_edit_buttons")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="⏳ Отложенная рассылка", callback_data="admin_scheduled_broadcast")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_statistics")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+    ])
+    await callback.message.answer("🔧 Админ-панель", reply_markup=keyboard)
+
+# 3. Отложенная рассылка
+@dp.callback_query(F.data == "admin_scheduled_broadcast")
+async def start_scheduled_broadcast(callback: CallbackQuery, state: FSMContext):
+    if not is_admin(callback.from_user.id):
+        await callback.answer("Только для админов", show_alert=True)
+        return
+        
+    await state.set_state(AdminStates.waiting_schedule_date)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
+    ])
+    
+    await callback.message.edit_text(
+        "⏳ <b>Отложенная рассылка</b>\n\n"
+        "Введите дату и время запуска в формате:\n"
+        "<code>ДД.ММ.ГГГГ ЧЧ:ММ</code>\n\n"
+        "Например: 31.12.2025 23:59",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+
+@dp.message(AdminStates.waiting_schedule_date)
+async def process_schedule_date(message: Message, state: FSMContext):
+    date_str = message.text.strip()
+    try:
+        run_date = datetime.strptime(date_str, "%d.%m.%Y %H:%M")
+        if run_date < datetime.now():
+            await message.answer("❌ Дата должна быть в будущем. Попробуйте снова.")
+            return
+            
+        await state.update_data(run_date=run_date.isoformat())
+        await state.set_state(AdminStates.waiting_schedule_content)
+        
+        await message.answer("✅ Дата принята. Теперь отправьте сообщение (текст/фото/видео) для рассылки.")
+        
+    except ValueError:
+        await message.answer("❌ Неверный формат даты. Используйте: ДД.ММ.ГГГГ ЧЧ:ММ")
+
+@dp.message(AdminStates.waiting_schedule_content)
+async def process_schedule_content(message: Message, state: FSMContext):
+    await state.update_data(
+        broadcast_message_id=message.message_id,
+        broadcast_chat_id=message.chat.id
+    )
+    
+    data = await state.get_data()
+    run_date_str = data.get("run_date")
+    run_date = datetime.fromisoformat(run_date_str)
+    
+    await state.set_state(AdminStates.waiting_schedule_confirm)
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Запланировать", callback_data="confirm_schedule")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_admin")]
+    ])
+    
+    await message.answer(
+        f"⏳ <b>Подтверждение отложенной рассылки</b>\n\n"
+        f"📅 Дата запуска: {run_date.strftime('%d.%m.%Y %H:%M')}\n"
+        f"Сообщение для отправки (копия ниже):",
+        reply_markup=keyboard,
+        parse_mode="HTML"
+    )
+    await message.copy_to(chat_id=message.chat.id)
+
+async def send_scheduled_message(chat_id, message_id):
+    phones = await load_phones()
+    users = list(phones.keys())
+    print(f"[SCHEDULED] Starting broadcast to {len(users)} users")
+    
+    for user_id in users:
+        try:
+            await bot.copy_message(chat_id=user_id, from_chat_id=chat_id, message_id=message_id)
+            await asyncio.sleep(0.05)
+        except Exception as e:
+            print(f"[SCHEDULED] Failed to send to {user_id}: {e}")
+
+@dp.callback_query(F.data == "confirm_schedule", AdminStates.waiting_schedule_confirm)
+async def execute_schedule(callback: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    msg_id = data.get("broadcast_message_id")
+    chat_id = data.get("broadcast_chat_id")
+    run_date_str = data.get("run_date")
+    run_date = datetime.fromisoformat(run_date_str)
+    
+    # Добавляем задачу в планировщик
+    scheduler.add_job(
+        send_scheduled_message,
+        'date',
+        run_date=run_date,
+        args=[chat_id, msg_id]
+    )
+    
+    await callback.message.edit_text(
+        f"✅ <b>Рассылка успешно запланирована!</b>\n"
+        f"Она будет выполнена {run_date.strftime('%d.%m.%Y %H:%M')}",
+        parse_mode="HTML"
+    )
+    await state.clear()
+    
+    # Возвращаем админа в главное меню админки
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📝 Редактировать текст", callback_data="admin_edit_texts")],
+        [InlineKeyboardButton(text="🔘 Редактировать кнопки", callback_data="admin_edit_buttons")],
+        [InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast")],
+        [InlineKeyboardButton(text="⏳ Отложенная рассылка", callback_data="admin_scheduled_broadcast")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="admin_statistics")],
+        [InlineKeyboardButton(text="🔙 Назад", callback_data="back_to_menu")]
+    ])
+    await callback.message.answer("🔧 Админ-панель", reply_markup=keyboard)
+
+
 # Обработка сообщений пользователя вне диалога (обычные сообщения, не команды и не в состоянии диалога)
 async def is_not_command(message: Message) -> bool:
     """Проверяет, что сообщение не является командой"""
@@ -2214,9 +2598,20 @@ async def handle_regular_message(message: Message, state: FSMContext):
     pass
 
 
-
+async def setup_commands(bot: Bot):
+    from aiogram.types import BotCommand
+    commands = [
+        BotCommand(command="start", description="🏠 Главное меню"),
+    ]
+    await bot.set_my_commands(commands)
 
 async def main():
+    # Запуск планировщика
+    scheduler.start()
+    
+    # Настройка команд (меню)
+    await setup_commands(bot)
+
     # Инициализация файлов, если их нет
     texts = await load_texts()
     if not texts:
